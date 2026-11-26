@@ -33,6 +33,6 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 PLIST
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_number" "$app/Contents/Info.plist"
 codesign --force --sign "$identity" --timestamp=none "$app"
-codesign --force --sign "$identity" --timestamp=none --entitlements "$root/MacBox.entitlements" "$products/macbox"
+codesign --force --sign "$identity" --timestamp=none --entitlements "$root/config/MacBox.entitlements" "$products/macbox"
 codesign --verify --strict "$app"
 printf 'Built: %s\nGuest: %s\n' "$products/macbox" "$app"

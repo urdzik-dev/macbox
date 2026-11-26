@@ -53,7 +53,7 @@ public enum MacBoxError: Error, LocalizedError, Sendable {
         case .unsupportedMacOSVersion:
             return "Оновіть хостову macOS до версії 14.0 або новішої."
         case .missingVirtualizationEntitlement:
-            return "Підпишіть бінарник за допомогою './scripts/build-and-sign.sh' або: codesign --force --sign - --entitlements MacBox.entitlements <binary>"
+            return "Підпишіть бінарник за допомогою './scripts/build-and-sign.sh' або: codesign --force --sign - --entitlements config/MacBox.entitlements <binary>"
         case .insufficientDiskSpace:
             return "Звільніть місце на диску або вкажіть інший APFS-том через --data-dir /Volumes/<Disk>/macbox."
         case .vmAlreadyRunning(let name):

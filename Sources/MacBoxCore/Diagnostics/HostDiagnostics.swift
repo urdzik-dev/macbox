@@ -95,7 +95,7 @@ public enum HostDiagnostics {
                 title: "Entitlement віртуалізації",
                 status: .fail,
                 detail: "com.apple.security.virtualization відсутній",
-                hint: "Підпишіть бінарник через './scripts/build-and-sign.sh' або codesign --entitlements MacBox.entitlements."
+                hint: "Підпишіть бінарник через './scripts/build-and-sign.sh' або codesign --entitlements config/MacBox.entitlements."
             ))
         }
 

@@ -59,10 +59,8 @@
 ```text
 macbox/
 ├── Package.swift
-├── PLAN.md
-├── DECISIONS.md
+├── docs/                  # PLAN.md, DECISIONS.md, CHECKLIST.md
 ├── SECURITY.md
-├── CHECKLIST.md
 ├── README.md
 ├── Sources/
 │   ├── MacBoxCore/          # Ядро VM: конфіг, життєвий цикл, диск (sparse/APFS clone), snapshot/restore, file lock, метадані
@@ -108,9 +106,9 @@ macbox/
 
 ## 6. Дорожня карта (Фази 0–8)
 
-- **Фаза 0 (поточна):** Дослідження, `PLAN.md`, `DECISIONS.md`, `SECURITY.md`, `CHECKLIST.md`.
+- **Фаза 0 (поточна):** Дослідження, `docs/PLAN.md`, `docs/DECISIONS.md`, `SECURITY.md`, `docs/CHECKLIST.md`.
 - **Фаза 1 (Spike):** SwiftPM-проєкт компілюється, підписується з `com.apple.security.virtualization`, створює/завантажує macOS VM і показує робочий стіл у нативному `NSWindow` (`VZVirtualMachineView`).
-- **Фаза 2 (Транспорт і кадри):** Прототипи кандидатів (`vsock`, `virtio-fs`, `NAT TCP`, перевірка `virtio-console`), бенчмарк латентності та пропускної здатності, заповнення таблиці вимірів у `DECISIONS.md`, фінальний вибір транспорту та формату кадрів.
+- **Фаза 2 (Транспорт і кадри):** Прототипи кандидатів (`vsock`, `virtio-fs`, `NAT TCP`, перевірка `virtio-console`), бенчмарк латентності та пропускної здатності, заповнення таблиці вимірів у `docs/DECISIONS.md`, фінальний вибір транспорту та формату кадрів.
 - **Фаза 3 (Ввід без впливу на хост):** Гостьовий агент `MacBoxAgent.app` (`ScreenCaptureKit` + `CGEvent`), скрипт робить скріншот, клікає в Dock і друкує в TextEdit, поки користувач вільно рухає мишею на хості.
 - **Фаза 4 (Термінальний Viewer):** Kitty Graphics (SHM + fallback) та iTerm2 inline images, автодетект, масштабування зі збереженням пропорцій, адаптивний FPS, коректний ресайз.
 - **Фаза 5 (Інтерактивний режим):** Миша (кліки, дабл/тріпл, drag, scroll), клавіатура, палітра `Ctrl+G` для Mac-шорткатів, вихід `Ctrl+]` без зупинки VM.
