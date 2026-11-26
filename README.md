@@ -4,7 +4,7 @@
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](Package.swift)
 ![Apple Silicon](https://img.shields.io/badge/architecture-Apple%20Silicon-555555)
 ![Status](https://img.shields.io/badge/status-experimental-orange)
-![License](https://img.shields.io/badge/license-not%20specified-lightgrey)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 MacBox gives an AI agent a separate macOS desktop to observe and operate without posting input to the host desktop. It combines Apple's Virtualization framework, a guest-side screen and input agent, and a local Model Context Protocol (MCP) server over stdio.
 
@@ -116,7 +116,7 @@ There is no `.env` file or dotenv loader. Set environment variables in the invok
 | `MACBOX_BUILD_NUMBER` | No | Current Unix timestamp | Positive numeric guest-bundle build version used by the build script. |
 | `MACBOX_GVPROXY_TEST` | No | Unset | Path to a real `gvproxy` executable for an optional automated test. |
 
-Ad-hoc signing is convenient for development but generally changes the designated identity across rebuilds; guest privacy approvals and automatic updates may not survive. The project does not include a license file or notarized release configuration. The separately downloaded `gvproxy` project is Apache-2.0 licensed.
+Ad-hoc signing is convenient for development but generally changes the designated identity across rebuilds; guest privacy approvals and automatic updates may not survive. MacBox is licensed under the [MIT License](LICENSE). The separately downloaded `gvproxy` project is Apache-2.0 licensed. The repository does not include a notarized release configuration.
 
 ### Optional user-space networking
 
