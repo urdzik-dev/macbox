@@ -1,72 +1,167 @@
 # MacBox
 
-Експериментальний MacBox запускає гостьову macOS на Apple Silicon через Virtualization.framework. Вікно `VZVirtualMachineView` є нативним переглядачем для початкового налаштування й ручної роботи. MCP використовує власний гостьовий агент і відокремлений службовий каталог.
+[![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](Package.swift)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](Package.swift)
+![Apple Silicon](https://img.shields.io/badge/architecture-Apple%20Silicon-555555)
+![Status](https://img.shields.io/badge/status-experimental-orange)
+![License](https://img.shields.io/badge/license-not%20specified-lightgrey)
 
-## Стан
+MacBox gives an AI agent a separate macOS desktop to observe and operate without posting input to the host desktop. It combines Apple's Virtualization framework, a guest-side screen and input agent, and a local Model Context Protocol (MCP) server over stdio.
 
-Реалізовано код встановлення та запуску VM, віконний переглядач, гостьовий агент, обмін через virtio-fs та MCP-інструменти `vm_status`, `status`, `screenshot`, `click`, `move`, `drag`, `scroll`, `type`, `key`. Повна перевірка в реальній гостьовій macOS ще не завершена: запуск агента, дозволи, правильність координат, введення та MCP потребують живого тесту. Не використовуй цей прототип для важливих даних до завершення перевірки. Автоматичне перше відкриття агента після встановлення VM, термінальний переглядач, клонування та відновлення стану ще не реалізовані.
+> **Status: experimental prototype, not production-ready.** A VM has booted and the guest agent has responded over the control channel, but full guest acceptance—including granted permissions, screenshots, input, updates, and networking—has not been completed. Do not use it for sensitive or high-impact workloads without further validation. The host OS, guest OS, and required macOS permissions remain part of the trust boundary.
 
-## Збірка й запуск
+## Engineering highlights
 
-Потрібні Apple Silicon, macOS 14+, Swift 6 і Xcode або Command Line Tools. `scripts/build-and-sign.sh` створює гостьовий app bundle і підписує хостовий бінарник entitlement для віртуалізації. За замовчуванням використовується ad-hoc підпис: після перекомпіляції гість може вимагати повторного надання дозволів. За потреби передай наявну стабільну ідентичність через `MACBOX_SIGN_IDENTITY`.
+- **Guest-scoped desktop control.** `MacBoxGuest` checks `hw.model` before running and uses guest-side CoreGraphics events and screen capture. The check prevents accidental execution on a physical Mac; it is not attestation.
+- **A bounded local control protocol.** The host and guest exchange versioned, length-prefixed JSON through a dedicated virtio-fs mailbox. Requests carry UUIDs and expiration times; file reads reject symbolic links, hard links, non-regular files, and oversized payloads.
+- **Explicit action outcomes.** MCP can return a screenshot after an action. If capture fails after the action succeeded, the response says that the action completed, so callers can check the result before retrying.
+- **Lifecycle and recovery primitives.** The VM uses sparse disk storage and a process lock. Restore-image downloads can retain URLSession resume data when available; installation uses Apple restore-image metadata and refuses to overwrite an existing VM directory.
+- **Update identity checks.** The guest update path stages a candidate, checks it against the installed app's designated code requirement, swaps bundles, and keeps the old bundle for rollback. Automatic login registration and updates have not been validated end to end in a guest.
+- **Change-aware screenshots.** A client can supply the previous PNG's SHA-256 to omit identical image bytes. Each request still captures and encodes a screenshot; this is not a streaming viewer or a demonstrated CPU optimization.
 
-Із завантаженого репозиторію запусти:
+## Architecture
 
-```sh
-./setup.sh
+```mermaid
+flowchart LR
+    client["MCP client / AI agent"] <-->|"JSON-RPC over stdio"| cli["macbox CLI + MCP server"]
+    cli -->|"lifecycle and window"| vz["Apple Virtualization.framework"]
+    vz --> vm["macOS guest VM"]
+    cli <-->|"bounded request / response files"| control["virtio-fs: control<br/>read/write"]
+    cli --> tools["virtio-fs: tools<br/>read-only"]
+    control <--> guest["MacBox Guest agent"]
+    tools --> guest
+    guest <-->|"capture and input events"| desktop["Guest desktop"]
+    cli --> store["Local VM disk, config,<br/>identity and image cache"]
+    apple["Apple restore-image service"] -->|"metadata / IPSW download"| store
+    vz -. "optional userspace NAT" .-> proxy["gvproxy process<br/>separately downloaded"]
 ```
 
-Скрипт збере застосунок і виконає `macbox up default`: для нової VM завантажить сумісний IPSW від Apple, встановить гостьову macOS і відкриє її вікно; наявну встановлену VM запустить повторно, а запущену не перезапустить. Потрібні інтернет, місце на диску та інтерактивне налаштування гостя. Для іншого імені або локального IPSW: `./setup.sh work --ipsw /шлях/образ.ipsw`. Для перевірки без встановлення VM: `./setup.sh --plan` (скрипт усе одно виконує збірку).
+- **`Sources/MacBoxCLI`** implements CLI commands, the stdio MCP server, and the native `VZVirtualMachineView` window.
+- **`Sources/MacBoxCore`** builds and installs VMs, manages storage and locks, checks readiness and code signatures, and provides the optional network bridge.
+- **`Sources/MacBoxProtocol`** defines the message schema, validation limits, framing, and file-based mailbox.
+- **`Sources/MacBoxGuest`** handles guest capture, input, permission status, login-item registration, and staged updates.
 
-Для розробки:
+The repository does not include an LLM, model provider integration, database, web server, or Docker deployment. The MCP client supplies the AI model and its own instruction and safety policies.
+
+## Stack
+
+| Layer | Implementation | Role in this project |
+| --- | --- | --- |
+| Language and build | Swift 6, Swift Package Manager | Builds the host CLI, guest executable, protocol, and tests. |
+| VM runtime | Apple Virtualization framework | Installs and runs a macOS guest on Apple Silicon. |
+| Desktop | AppKit, CoreGraphics, ApplicationServices | Provides the native VM window and guest-side screenshot/input operations. |
+| Agent interface | MCP-style JSON-RPC over stdio | Exposes desktop actions to a compatible local client. No model is bundled. |
+| Storage and transport | Local sparse disk, JSON metadata, virtio-fs mailbox | Persists guest state and exchanges bounded local messages; no database is used. |
+| Identity and secrets | Security framework, Keychain, CryptoKit | Checks code requirements, generates selected secrets, and hashes screenshot bytes. |
+| Optional networking | `gvproxy` v0.9.0 | Supplies an optional user-space NAT path; it is separately downloaded, not a Swift package dependency. |
+
+## Repository layout
+
+```text
+.
+├── Package.swift                 # Swift package and targets
+├── setup.sh                      # Build and start guided first run
+├── config/MacBox.entitlements    # Host virtualization entitlement
+├── scripts/                      # Signing and optional network-helper download
+├── Sources/
+│   ├── MacBoxCLI/                # CLI, MCP server, native VM window
+│   ├── MacBoxCore/               # Agent, VM, storage, network, diagnostics
+│   ├── MacBoxGuest/              # Guest application
+│   └── MacBoxProtocol/           # Message protocol and mailbox
+├── Tests/MacBoxCoreTests/        # Swift Testing suites
+├── docs/                         # Historical plan, decisions, checklist
+└── SECURITY.md                   # Trust boundaries and disclosure guidance
+```
+
+## Quickstart
+
+### Requirements
+
+- Apple Silicon Mac running macOS 14 or later; Swift 6 and Xcode or Command Line Tools.
+- Internet access for Apple's compatible restore image, unless supplying a local IPSW. Allow substantial disk space for the image and VM disk; the default disk is a 64 GiB sparse file, not a 64 GiB upfront allocation.
+- A logged-in guest session and guest-side Screen Recording and Accessibility permissions. The first guest setup and first agent launch are interactive in the current implementation.
+- A compatible MCP client if using an AI agent. No API key is required by MacBox itself.
 
 ```sh
+git clone https://github.com/urdzik-dev/macbox.git
+cd macbox
+./setup.sh --plan  # builds and signs; prints the VM plan without installing a VM
+./setup.sh         # builds, downloads/reuses an image, installs and opens the default VM
+```
+
+On the first guest boot, complete macOS setup, then open `/Volumes/My Shared Files/tools/MacBoxGuest.app` inside the guest and follow the permission prompts. The agent attempts to install a guest-local copy and register a login item; system approval may be required. These steps do not grant host screen or Accessibility permissions to the guest agent.
+
+```sh
+# Inspect host and guest readiness after a release build
+.build/release/macbox doctor
+.build/release/macbox ready default --json
+
+# Use an existing local Apple restore image instead of downloading one
+./setup.sh work --ipsw /absolute/path/to/Restore.ipsw
+
+# Run the automated tests
 swift test
-bash scripts/build-and-sign.sh
-.build/debug/macbox doctor
-.build/debug/macbox start dev
 ```
 
-Для нової VM дивись `.build/debug/macbox help`: потрібен сумісний IPSW і початкове налаштування macOS. У гостьовій системі потрібно увійти, відкрити `/Volumes/My Shared Files/tools/MacBoxGuest.app` і скористатися кнопками вікна майстра для Screen Recording та Accessibility. Вікно показує поточний стан дозволів і шлях до запущеної копії; після надання дозволів агент може потребувати перезапуску. Перевірка готовності на хості: `.build/debug/macbox ready dev` (після release-збірки — `.build/release/macbox ready dev`). Команда запитує стан дозволів і перевіряє отримання коректного PNG, але не виконує пробного натискання клавіші або кліку. Після першого відкриття зі спільної папки агент намагається встановити локальну копію в `~/Applications` гостя та зареєструвати її для наступних входів. Система може вимагати підтвердження Login Items. Повністю автоматичне перше відкриття й тест цього процесу в гості ще не реалізовані. Наявність VM `dev` не гарантована.
+`ready` checks the lock, guest permission status, and whether a valid PNG can be obtained. It does **not** perform a test click or key press. CLI output and errors currently include Ukrainian text.
 
-Для MCP-клієнта використай абсолютний шлях до підписаного бінарника і аргумент `mcp`. Для кожного виклику інструмента передається `vm` з ім'ям машини. Зображення скріншота повертається в координатах дисплея гостя; це потребує перевірки на HiDPI.
+### Configuration
+
+There is no `.env` file or dotenv loader. Set environment variables in the invoking process when needed.
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `MACBOX_DATA_DIR` | No | `~/.macbox` | VM and image-cache root; global `--data-dir` takes precedence. |
+| `MACBOX_SIGN_IDENTITY` | No | `-` | Code-signing identity used by the build script; `-` means ad-hoc signing. |
+| `MACBOX_BUILD_NUMBER` | No | Current Unix timestamp | Positive numeric guest-bundle build version used by the build script. |
+| `MACBOX_GVPROXY_TEST` | No | Unset | Path to a real `gvproxy` executable for an optional automated test. |
+
+Ad-hoc signing is convenient for development but generally changes the designated identity across rebuilds; guest privacy approvals and automatic updates may not survive. The project does not include a license file or notarized release configuration. The separately downloaded `gvproxy` project is Apache-2.0 licensed.
+
+### Optional user-space networking
+
+```sh
+bash scripts/install-network-helper.sh
+.build/release/macbox start work --vpn-proxy "$PWD/vendor/gvproxy/gvproxy"
+```
+
+The helper script downloads the pinned upstream `gvproxy` v0.9.0 binary and checks its SHA-256. This mode uses a private Unix datagram socket and a random API token, with default SSH forwarding disabled. It has been exercised at the host process/socket level, not validated end to end inside the guest or with a specific VPN. It is NAT, not a guarantee of VPN routing or LAN isolation.
+
+## MCP usage
+
+Configure a client with the absolute path to the signed executable:
 
 ```json
-{"mcpServers":{"macbox":{"command":"/ABSOLUTE/PATH/TO/macbox/.build/debug/macbox","args":["mcp"]}}}
+{
+  "mcpServers": {
+    "macbox": {
+      "command": "/absolute/path/to/macbox/.build/release/macbox",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
 
-## Ізоляція
+The server uses newline-delimited JSON-RPC on stdin/stdout, not HTTP. The following read-only example queries the VM configuration; replace `default` with the name of an existing VM:
 
-В гість передаються два службові каталоги: `control` доступний для запису і `tools` лише для читання. Домашню папку та буфер обміну хоста не підключено. NAT сам по собі не блокує доступ гостя до локальної мережі; створюй VM з `--offline`, якщо мережа не потрібна. Перевірка `VirtualMac` запобігає випадковому запуску агента на хості, але не є апаратною атестацією. Повідомлення в каналі вважаються недовіреними; обмін і стійкість до збоїв ще потребують live-перевірки.
+```sh
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"vm_status","arguments":{"vm":"default"}}}' | .build/release/macbox mcp
+```
 
-Архітектурні нотатки та початкові плани зібрані в [`docs/`](docs/); [SECURITY.md](SECURITY.md) описує заплановану модель загроз. Ці документи не замінюють перевірку фактичної реалізації.
+Representative response for a configured VM (the `text` field is itself JSON):
 
-## Жива перевірка 26 листопада 2026
+```json
+{"id":1,"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"{\"cpuCount\":4,\"installed\":true,\"locked\":false,\"memoryGiB\":8,\"name\":\"default\"}"}]}}
+```
 
-VM `dev` запущено, гостьовий агент відповів через MCP і virtio-fs. Агент повідомив `screenRecording=false accessibility=false`; запити знімка та клавіші коректно повернули помилку дозволу. Поведінку скріншотів і введення після надання дозволів ще не перевірено.
+Available tools are `vm_status`, `status`, `screenshot`, `click`, `move`, `drag`, `scroll`, `type`, and `key`; each accepts `vm`. The six input actions accept `screenshot: true`. `screenshot` accepts `if_hash` with the prior SHA-256 to return an unchanged status instead of repeating identical image bytes. Coordinates are guest display points in the returned image; HiDPI alignment requires live verification.
 
-Для гостьових macOS до 27 Setup Assistant потребує ручного налаштування. Для нової гостьової macOS 27 на хості macOS 27 передбачений виклик Apple provisioning: користувач `macbox`, автоматичний вхід та випадковий пароль, збережений у Keychain хоста. Ідентифікатор запису (`provisioningID`) зберігається в конфігурації VM; шукати пароль можна у Keychain Access за `MacBox guest` та цим UUID. Під час збірки через `scripts/build-and-sign.sh` потрібен SDK macOS 27; зі старим SDK перший запуск сумісного гостя зупиниться з поясненням. Ця гілка ще не перевірена компіляцією з SDK 27 або запуском macOS 27. Вона не встановлює агент і не надає Screen Recording та Accessibility автоматично. Наявні VM не переналаштовуються. Стартовий сценарій поки не пройшов повний тест на чистій машині.
+## Trade-offs and next steps
 
-## Стан останніх змін
+1. **Complete live acceptance:** verify guest setup, permissions, screenshots, coordinate alignment, input, login-item registration, updates, and networking on a real guest.
+2. **Harden the trust boundary:** add explicit MCP-client authorization and stronger isolation, bound MCP input, and test malformed or adversarial guest responses. See [SECURITY.md](SECURITY.md).
+3. **Make first run recoverable:** test interrupted IPSW downloads and installation failures; do not assume resume data will always be available or usable.
+4. **Validate newer-platform provisioning:** the macOS 27 first-boot path is conditional on a matching SDK and host; it has not been built or tested here and does not grant guest privacy permissions.
+5. **Measure before optimizing:** benchmark action latency, image size, resource use, and failure rates in real guest sessions. The current native window is not a terminal video stream.
 
-MCP-дії `click`, `move`, `drag`, `scroll`, `type`, `key` приймають необов'язковий `screenshot: true`. Відповідь попереджає, якщо дія вже виконана, але отримати знімок не вдалося. До запиту скріншота є затримка 250 мс; це не гарантує завершення анімацій.
-
-Завантажувач зберігає opaque resume data, коли URLSession надає їх після помилки. Продовження залежить від сервера та актуальності даних, а жорстке завершення процесу може втратити поточний прогрес. Перевірено збереження й прив'язку до URL, але фактичний розрив і відновлення великого IPSW ще не протестовано.
-
-Гостьовий агент періодично шукає новішу копію у службовій папці. Перед оновленням кандидат копіюється в staging і перевіряється за designated requirement встановленої копії; старий bundle зберігається для відкату. Для оновлень між різними збірками потрібен стабільний підпис (`MACBOX_SIGN_IDENTITY`): ad-hoc підпис зазвичай змінює ідентичність, тому оновлення буде відхилено. Процес встановлення, реєстрації Login Items, оновлення та відкату ще не перевірений наскрізно у гості.
-
-`screenshot` підтримує `if_hash` із SHA-256 попереднього PNG: гостьовий агент повертає лише статус, якщо PNG не змінився. Екран усе одно захоплюється та кодується при кожному запиті; це не потоковий viewer і не доведене зниження CPU. Зі старим агентом цей запит може не підтримуватися.
-
-Для експериментального user-mode NAT виконай `bash scripts/install-network-helper.sh`, а потім запусти **вимкнену** VM: `.build/release/macbox start dev --vpn-proxy "$PWD/vendor/gvproxy/gvproxy"`. Скрипт бере gvproxy v0.9.0 з офіційного релізу та звіряє зафіксований SHA-256. Це сторонній компонент проєкту containers/gvisor-tap-vsock (Apache-2.0), він завантажується окремо, не входить у репозиторій і не є власним кодом MacBox. MacBox задає токен API і вимикає стандартний SSH-проброс. Режим є мережевим NAT, не гарантує використання VPN і не ізолює гостя від усієї локальної мережі. Процес і датаграмний транспорт перевірено з gvproxy v0.9.0, але не з гостьовою VM чи конкретним VPN.
-
-## Структура проєкту
-
-- `Sources/MacBoxCLI/` — команди, MCP і вікно віртуальної машини.
-- `Sources/MacBoxCore/` — логіка VM, агента, зберігання, мережі та діагностики.
-- `Sources/MacBoxGuest/` — гостьовий застосунок для взаємодії з робочим столом.
-- `Sources/MacBoxProtocol/` — повідомлення та канал обміну між хостом і гостем.
-- `Tests/` — автоматичні перевірки.
-- `docs/` — [план](docs/PLAN.md), [архітектурні рішення](docs/DECISIONS.md) та [чекліст](docs/CHECKLIST.md).
-- `scripts/` і `config/` — збірка, необов'язковий мережевий компонент і налаштування підпису.
-
-`.build/` і `vendor/` — локальні службові каталоги, вони не входять до Git.
+Historical [planning](docs/PLAN.md), [decisions](docs/DECISIONS.md), and [checklist](docs/CHECKLIST.md) documents describe goals and hypotheses, not a verified feature inventory.
